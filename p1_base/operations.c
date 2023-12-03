@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "eventlist.h"
+#include "inputAux.h"
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
@@ -221,13 +222,46 @@ int ems_file(char * dirPath,char * filename){
   int fd = open(filePath,O_RDONLY);
   if (fd < 0){
       fprintf(stderr, "open error: %s\n", strerror(errno));
-      return 1;
+      return -1;
   }
-  // ler e mandar para o getnext()
-  printf("%s\n", filename);
-  while (line = read(fd,buffer,))
-  close(fd);
   
+  char buffer[128];
+  memset(buffer,0,sizeof(buffer));
+
+  /* read the contents of the file */
+  int size_b = sizeof(buffer);
+  int count = 0;
+  printf("%s\n",filename);
+  while(1){
+    ssize_t bytes_read = read(fd, buffer ,sizeof(buffer));
+    if (bytes_read < 0){
+        fprintf(stderr, "read error: %s\n", strerror(errno));
+        return -1;
+    }
+    /* if we read 0 bytes, we're done */
+    if (bytes_read == 0)
+        break;
+
+    int found = 0;
+    int i=0;
+    for(;i<size_b;i++){
+      if (buffer[i]=='\n'){
+        count+=i+1;
+        found = 1;
+        break;
+      }
+    }
+    if (!switchCase(fd)){
+      // quando quer acabar com o programa
+      return 1;
+    }
+    lseek(fd,count,SEEK_SET);
+    if (!found){
+      break;
+    }
+  }
+  // ler , processar (basta fazer o que faria se le-se do STDIN) e escrever num .out
+  close(fd);
   return 0;
 }
 
