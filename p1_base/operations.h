@@ -40,8 +40,8 @@ int ems_list_events();
 void ems_wait(unsigned int delay_ms);
 
 /// read all the .job files.
-/// @param dirPath the path to the dir.
+/// @param dirpath the path to the dir.
 /// @return 0 if all went sucessfully, 1 otherwise.
-int ems_file(DIR* dirPath,char *arg);
+int ems_file(char * dirpath,char *filename);
 
 #endif  // EMS_OPERATIONS_H

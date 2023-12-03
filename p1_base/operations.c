@@ -215,22 +215,19 @@ int ems_list_events() {
   return 0;
 }
 
-int ems_file(DIR* dirPath,char * arg){
-  struct dirent *file;
-  while ((file = readdir(dirPath))!=NULL){
-    // arranhar forma de pegar o nome do ficheiro para passar aqui
-    char * filePath = strcat(arg,"/");
-    strcat(filePath,file->d_name);
-    int fd = open(filePath,O_RDONLY);
-    if (fd < 0){
-        fprintf(stderr, "open error: %s\n", strerror(errno));
-        return 1;
-    }
-    close(fd);
-    /* so para ver se estamos a abrir bem */
-    printf("%s\n", file->d_name);
-    
+int ems_file(char * dirPath,char * filename){
+  char filePath[strlen(dirPath)+strlen(filename)+2];
+  snprintf(filePath, sizeof(filePath), "%s/%s", dirPath, filename);
+  int fd = open(filePath,O_RDONLY);
+  if (fd < 0){
+      fprintf(stderr, "open error: %s\n", strerror(errno));
+      return 1;
   }
+  // ler e mandar para o getnext()
+  printf("%s\n", filename);
+  while (line = read(fd,buffer,))
+  close(fd);
+  
   return 0;
 }
 

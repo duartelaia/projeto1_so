@@ -28,7 +28,9 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     state_access_delay_ms = (unsigned int)delay;
-
+  }
+  // processo de leitura dos ficheiros de um diretorio
+  if (argc > 2){
     // verificação da diretoria
     DIR *Dir;
     Dir = opendir(argv[2]);
@@ -36,13 +38,22 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "openDir error: %s\n", strerror(errno));
       return 1;
     }
-    if (ems_file(Dir,argv[2])){
-      fprintf(stderr, "failed!");
-      return 1;
+    /* leitura do diretorio */
+    struct dirent *file;
+    while ((file = readdir(Dir)) != NULL) {
+        // Ignora entradas especiais "." e ".."
+        size_t size = strlen(file->d_name);
+        if (strcmp(file->d_name, ".") != 0 && strcmp(file->d_name, "..") != 0 &&
+            !strcmp(file->d_name + (size > 5 ?  size - 5 : 0), ".jobs")) {
+            if(ems_file(argv[2], file->d_name)){
+              fprintf(stderr, "failed!");
+              return 1;
+            }
+        }
     }
     closedir(Dir);
+    return 0;
   }
-
   if (ems_init(state_access_delay_ms)) {
     fprintf(stderr, "Failed to initialize EMS\n");
     return 1;
