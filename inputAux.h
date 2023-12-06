@@ -4,6 +4,6 @@
 /// its the main switch case.
 /// @param fd is the fileDescriptor 
 /// @return  0 if we want to end the program , 1 otherwise.
-int switchCase(int fd);
+int switchCase(int fdIn, int fdOut);
 
 #endif  // INPUT_MAIN_CASE

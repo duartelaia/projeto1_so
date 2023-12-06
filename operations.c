@@ -55,6 +55,15 @@ static unsigned int* get_seat_with_delay(struct Event* event, size_t index) {
 /// @return Index of the seat.
 static size_t seat_index(struct Event* event, size_t row, size_t col) { return (row - 1) * event->cols + col - 1; }
 
+int writeToFile(int fd, char * buffer){
+  ssize_t bytes_written = write(fd, buffer, strlen(buffer));
+  if (bytes_written < 0){
+    fprintf(stderr, "write error: %s\n", strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
 int ems_init(unsigned int delay_ms) {
   if (event_list != NULL) {
     fprintf(stderr, "EMS state has already been initialized\n");
@@ -74,24 +83,25 @@ int ems_terminate() {
   }
 
   free_list(event_list);
+  event_list = NULL;
   return 0;
 }
 
-int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
+int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols, int fd) {
   if (event_list == NULL) {
-    fprintf(stderr, "EMS state must be initialized\n");
+    writeToFile(fd, "EMS state must be initialized\n");
     return 1;
   }
 
   if (get_event_with_delay(event_id) != NULL) {
-    fprintf(stderr, "Event already exists\n");
+    writeToFile(fd, "Event already exists\n");
     return 1;
   }
 
   struct Event* event = malloc(sizeof(struct Event));
 
   if (event == NULL) {
-    fprintf(stderr, "Error allocating memory for event\n");
+    writeToFile(fd, "Error allocating memory for event\n");
     return 1;
   }
 
@@ -102,7 +112,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   event->data = malloc(num_rows * num_cols * sizeof(unsigned int));
 
   if (event->data == NULL) {
-    fprintf(stderr, "Error allocating memory for event data\n");
+    writeToFile(fd, "Error allocating memory for event data\n");
     free(event);
     return 1;
   }
@@ -112,7 +122,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   }
 
   if (append_to_list(event_list, event) != 0) {
-    fprintf(stderr, "Error appending event to list\n");
+    writeToFile(fd, "Error appending event to list\n");
     free(event->data);
     free(event);
     return 1;
@@ -121,16 +131,16 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   return 0;
 }
 
-int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
+int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys, int fd) {
   if (event_list == NULL) {
-    fprintf(stderr, "EMS state must be initialized\n");
+    writeToFile(fd,  "EMS state must be initialized\n");
     return 1;
   }
 
   struct Event* event = get_event_with_delay(event_id);
 
   if (event == NULL) {
-    fprintf(stderr, "Event not found\n");
+    writeToFile(fd, "Event not found\n");
     return 1;
   }
 
@@ -142,12 +152,12 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     size_t col = ys[i];
 
     if (row <= 0 || row > event->rows || col <= 0 || col > event->cols) {
-      fprintf(stderr, "Invalid seat\n");
+      writeToFile(fd, "Invalid seat\n");
       break;
     }
 
     if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
-      fprintf(stderr, "Seat already reserved\n");
+      writeToFile(fd, "Seat already reserved\n");
       break;
     }
 
@@ -166,69 +176,96 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   return 0;
 }
 
-int ems_show(unsigned int event_id) {
+int ems_show(unsigned int event_id, int fd) {
   if (event_list == NULL) {
-    fprintf(stderr, "EMS state must be initialized\n");
+    writeToFile(fd, "EMS state must be initialized\n");
     return 1;
   }
 
   struct Event* event = get_event_with_delay(event_id);
 
   if (event == NULL) {
-    fprintf(stderr, "Event not found\n");
+    writeToFile(fd, "Event not found\n");
     return 1;
   }
+
+  char buffer[1024];
+  char smallBuffer[10];
+  memset(buffer, 0, sizeof(buffer));
 
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       unsigned int* seat = get_seat_with_delay(event, seat_index(event, i, j));
-      printf("%u", *seat);
+
+      snprintf(smallBuffer, sizeof(smallBuffer), "%u", *seat);
+      strcat(buffer, smallBuffer);
 
       if (j < event->cols) {
-        printf(" ");
+        strcat(buffer, " ");
       }
     }
-
-    printf("\n");
+    strcat(buffer, "\n");
   }
+  writeToFile(fd,buffer);
 
   return 0;
 }
 
-int ems_list_events() {
+int ems_list_events(int fd) {
   if (event_list == NULL) {
-    fprintf(stderr, "EMS state must be initialized\n");
+    writeToFile(fd, "EMS state must be initialized\n");
     return 1;
   }
 
   if (event_list->head == NULL) {
-    printf("No events\n");
+    writeToFile(fd,"No events\n");
     return 0;
   }
 
   struct ListNode* current = event_list->head;
+  char buffer[1024];
+  memset(buffer, 0, sizeof(buffer));
+  char smallBuffer[10];
+
   while (current != NULL) {
-    printf("Event: ");
-    printf("%u\n", (current->event)->id);
+    strcat(buffer,"Event: ");
+    snprintf(smallBuffer, sizeof(smallBuffer), "%u", (current->event)->id);
+    strcat(buffer, smallBuffer);
+    strcat(buffer, "\n");
     current = current->next;
   }
+
+  writeToFile(fd, buffer);
 
   return 0;
 }
 
 int ems_file(char * dirPath,char * filename){
-  char filePath[strlen(dirPath)+strlen(filename)+2];
-  snprintf(filePath, sizeof(filePath), "%s/%s", dirPath, filename);
-  int fd = open(filePath,O_RDONLY);
-  if (fd < 0){
+  char filePathIn[strlen(dirPath)+strlen(filename)+2];
+  snprintf(filePathIn, sizeof(filePathIn), "%s/%s", dirPath, filename);
+
+  char filePathOut[strlen(dirPath)+strlen(filename)+2];
+  char fileNameParsed[strlen(filename)];
+  memset(fileNameParsed, 0, sizeof(fileNameParsed));
+  strncpy(fileNameParsed, filename, strlen(filename)-5);
+  snprintf(filePathOut, sizeof(filePathOut), "%s/%s.out", dirPath, fileNameParsed);
+
+  int fdout = open(filePathOut,O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+  if (fdout < 0){
+      fprintf(stderr, "open error: %s\n", strerror(errno));
+      return -1;
+  }
+
+  int fdin = open(filePathIn,O_RDONLY);
+  if (fdin < 0){
       fprintf(stderr, "open error: %s\n", strerror(errno));
       return -1;
   }
   
-  printf("%s\n",filename);
-  while(switchCase(fd));
+  while(switchCase(fdin, fdout));
   
-  close(fd);
+  close(fdin);
+  close(fdout);
   return 0;
 }
 
