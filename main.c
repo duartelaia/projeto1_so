@@ -20,12 +20,15 @@
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
 
-  if (argc > 4){
+  if (argc > 5){
     return 1;
   }
 
-  // MaxProc
-  int maxproc = atoi(argv[3]);
+  // MaxProcesses
+  int maxProcesses = atoi(argv[3]);
+
+  // MaxThreads
+  int maxThreads = atoi(argv[4]);
 
   // Delay
   char *endptr;
@@ -55,7 +58,7 @@ int main(int argc, char *argv[]) {
 
   int process_counter = 0;
   while (1) {
-    if (process_counter >= maxproc){
+    if (process_counter >= maxProcesses){
       // Wait for any process to end
       int state;
       wait(&state);
@@ -93,7 +96,12 @@ int main(int argc, char *argv[]) {
       // Parent
       process_counter++;
     }
-  } 
+  }
+
+  while (process_counter > 0){
+    wait(NULL);
+    process_counter--;
+  }
   
   closedir(dir);
 
