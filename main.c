@@ -86,7 +86,7 @@ int main(int argc, char *argv[]) {
 
     if (pid == 0){
       // Child  
-      if(ems_file(argv[2], file->d_name) == -1){
+      if(ems_file(argv[2], file->d_name, maxThreads) == -1){
         fprintf(stderr, "failed!\n");
         exit(1);
       }
@@ -99,7 +99,9 @@ int main(int argc, char *argv[]) {
   }
 
   while (process_counter > 0){
-    wait(NULL);
+    int state;
+    wait(&state);
+    printf("%d\n", state);
     process_counter--;
   }
   
