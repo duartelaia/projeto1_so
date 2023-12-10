@@ -46,7 +46,7 @@ static unsigned int* get_seat_with_delay(struct Event* event, size_t index) {
   struct timespec delay = delay_to_timespec(state_access_delay_ms);
   nanosleep(&delay, NULL);  // Should not be removed
 
-  return &event->data[index];
+  return &event->data[index].value;
 }
 
 /// Gets the index of a seat.
@@ -89,7 +89,6 @@ int ems_terminate() {
   return 0;
 }
 
-
 int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
@@ -112,7 +111,9 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   event->rows = num_rows;
   event->cols = num_cols;
   event->reservations = 0;
-  event->data = malloc(num_rows * num_cols * sizeof(unsigned int));
+  event->activeReservations = 0;
+  event->activeShowers = 0;
+  event->data = malloc(num_rows * num_cols * sizeof(struct data));
 
   if (event->data == NULL) {
     fprintf(stderr, "Error allocating memory for event data\n");
@@ -121,7 +122,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   }
 
   for (size_t i = 0; i < num_rows * num_cols; i++) {
-    event->data[i] = 0;
+    event->data[i].value = 0;
   }
 
   if (append_to_list(event_list, event) != 0) {
@@ -131,10 +132,12 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     return 1;
   }
 
+  printf("criou evento\n");
   return 0;
 }
 
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
+  
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -146,6 +149,9 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     fprintf(stderr, "Event not found\n");
     return 1;
   }
+
+  while(event->activeShowers!=0);
+  event->activeReservations++;
 
   unsigned int reservation_id = ++event->reservations;
 
@@ -159,12 +165,16 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
       break;
     }
 
+    pthread_mutex_lock(&event->data->mutex);
+    
     if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
       fprintf(stderr, "Seat already reserved\n");
       break;
     }
 
     *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
+
+    pthread_mutex_unlock(&event->data->mutex);
   }
 
   // If the reservation was not successful, free the seats that were reserved.
@@ -176,10 +186,14 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     return 1;
   }
 
+  event->activeReservations--;
+
+  printf("reservou evento\n");
   return 0;
 }
 
 int ems_show(unsigned int event_id, int fd) {
+
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -191,6 +205,9 @@ int ems_show(unsigned int event_id, int fd) {
     fprintf(stderr, "Event not found\n");
     return 1;
   }
+
+  while(event->activeReservations!=0);
+  event->activeShowers++;
 
   char buffer[5000];
   char smallBuffer[10];
@@ -212,7 +229,9 @@ int ems_show(unsigned int event_id, int fd) {
   }
 
   writeToFile(fd,buffer);
+  event->activeShowers--;
 
+  printf("mostrou evento\n");
   return 0;
 }
 
@@ -242,6 +261,7 @@ int ems_list_events(int fd) {
   }
 
   writeToFile(fd, buffer);
+  printf("listou evento\n");
   return 0;
 }
 
@@ -273,18 +293,20 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
   }
 
   pthread_t tid[maxThreads];
-  int continueReading = 1;
+  int continueReading = 1, threadFinished=0;
 
   int threadState[maxThreads];
   memset(threadState, 0, sizeof(threadState));
-
-  int* arguments[4] = {&fdin, &fdout, NULL, threadState};
+  
   
   while(continueReading){
-
     for(int i = 0; i < maxThreads; i++){
       if (threadState[i] == 0){
-        arguments[2] = &i;
+        Arguments * arguments = malloc(sizeof(struct arguments));
+        arguments->fdin = fdin;
+        arguments->fdout = fdout;
+        arguments->threadState = threadState;
+        arguments->id = i;
         if(pthread_create(&tid[i], 0, switchCase, arguments) != 0){
           fprintf(stderr, "Error creating thread\n");
         }
@@ -292,23 +314,29 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
       }
     }
 
-    for(int i = 0; i < maxThreads; i++){
-      if(threadState[i] == 1){
-        int *result = NULL;
-        pthread_join(tid[i], (void **)&result);
-        if (*result == 0){
-          continueReading = 0;
+    threadFinished = 0;
+    while (!threadFinished){
+      for(int i = 0; i < maxThreads; i++){
+        if(threadState[i] == 1){
+          int *result = NULL;
+          pthread_join(tid[i], (void **)&result);
+          if (*result == 0){
+            continueReading = 0;
+          }
+          free(result);
+          threadState[i] = 0;
+          threadFinished = 1;
         }
-        free(result);
-        threadState[i] = 0;
       }
     }
   }
-
+  
   for(int i = 0; i < maxThreads; i++){
-    int *result = NULL;
-    pthread_join(tid[i], (void **)&result);
-    free(result);
+    if (threadState[i] != 0){
+      int *result = NULL;
+      pthread_join(tid[i], (void **)&result);
+      free(result);
+    }
   }
 
   close(fdin);

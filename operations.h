@@ -3,6 +3,11 @@
 
 #include <stddef.h>
 
+typedef struct arguments{
+    int fdin, fdout, id;
+    int * threadState;
+} Arguments;
+
 int writeToFile(int fd, char * buffer);
 
 /// Initializes the EMS state.

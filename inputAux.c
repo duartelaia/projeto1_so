@@ -21,11 +21,12 @@ void* switchCase(void *arguments){
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
-  int ** parsedArguments = (int**) arguments;
-  int fdIn = *parsedArguments[0];
-  int fdOut = *parsedArguments[1];
-  int threadID = *parsedArguments[2];
-  int * threadState = parsedArguments[3];
+  Arguments * parsedArguments = (Arguments*) arguments;
+  int fdIn = parsedArguments->fdin;
+  int fdOut = parsedArguments->fdout;
+  int threadID = parsedArguments->id;
+  int * threadState = parsedArguments->threadState;
+  free(arguments);
   threadState[threadID] = 2;
 
   int * result = malloc(sizeof(int));

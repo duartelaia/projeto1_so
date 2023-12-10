@@ -2,15 +2,24 @@
 #define EVENT_LIST_H
 
 #include <stddef.h>
+#include <pthread.h>
+
+typedef struct data {
+  unsigned int value;
+  pthread_mutex_t mutex;
+} Data;
 
 struct Event {
   unsigned int id;            /// Event id
   unsigned int reservations;  /// Number of reservations for the event.
 
+  int activeReservations;
+  int activeShowers;
+
   size_t cols;  /// Number of columns.
   size_t rows;  /// Number of rows.
 
-  unsigned int* data;  /// Array of size rows * cols with the reservations for each seat.
+  Data *data;  /// Array of size rows * cols with the reservations for each seat.
 };
 
 struct ListNode {
