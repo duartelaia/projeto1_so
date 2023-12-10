@@ -18,7 +18,6 @@
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
-int * threadState;
 
 /// Calculates a timespec from a delay in milliseconds.
 /// @param delay_ms Delay in milliseconds.
@@ -91,132 +90,109 @@ int ems_terminate() {
 }
 
 
-void* ems_create(void *arguments) {
-  ThreadArguments *parsedArguments = (ThreadArguments*) arguments;
-  threadState[parsedArguments->threadID] = 2;
+int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   if (event_list == NULL) {
-    writeToFile(parsedArguments->fdOut, "EMS state must be initialized\n");
-    writeToFile(parsedArguments->fdOut, "Failed to create event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    fprintf(stderr, "EMS state must be initialized\n");
+    return 1;
   }
 
-  if (get_event_with_delay(parsedArguments->event_id) != NULL) {
-    writeToFile(parsedArguments->fdOut, "Event already exists\n");
-    writeToFile(parsedArguments->fdOut, "Failed to create event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+  if (get_event_with_delay(event_id) != NULL) {
+    fprintf(stderr, "Event already exists\n");
+    return 1;
   }
 
   struct Event* event = malloc(sizeof(struct Event));
 
   if (event == NULL) {
-    writeToFile(parsedArguments->fdOut, "Error allocating memory for event\n");
-    writeToFile(parsedArguments->fdOut, "Failed to create event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    fprintf(stderr, "Error allocating memory for event\n");
+    return 1;
   }
 
-  event->id = parsedArguments->event_id;
-  event->rows = parsedArguments->num_rows;
-  event->cols = parsedArguments->num_columns;
+  event->id = event_id;
+  event->rows = num_rows;
+  event->cols = num_cols;
   event->reservations = 0;
-  event->data = malloc(parsedArguments->num_rows * parsedArguments->num_columns * sizeof(unsigned int));
+  event->data = malloc(num_rows * num_cols * sizeof(unsigned int));
 
   if (event->data == NULL) {
-    writeToFile(parsedArguments->fdOut, "Error allocating memory for event data\n");
+    fprintf(stderr, "Error allocating memory for event data\n");
     free(event);
-    writeToFile(parsedArguments->fdOut, "Failed to create event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    return 1;
   }
 
-  for (size_t i = 0; i < parsedArguments->num_rows * parsedArguments->num_columns; i++) {
+  for (size_t i = 0; i < num_rows * num_cols; i++) {
     event->data[i] = 0;
   }
 
   if (append_to_list(event_list, event) != 0) {
-    writeToFile(parsedArguments->fdOut, "Error appending event to list\n");
+    fprintf(stderr, "Error appending event to list\n");
     free(event->data);
     free(event);
-    writeToFile(parsedArguments->fdOut, "Failed to create event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    return 1;
   }
 
-  printf("%d : criou\n", parsedArguments->threadID);
-  threadState[parsedArguments->threadID] = 1;
   return 0;
 }
 
-void* ems_reserve(void *arguments) {
-  ThreadArguments *parsedArguments = (ThreadArguments*) arguments;
-  threadState[parsedArguments->threadID] = 2;
+int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
   if (event_list == NULL) {
-    writeToFile(parsedArguments->fdOut,  "EMS state must be initialized\n");
-    writeToFile(parsedArguments->fdOut, "Failed to reserve seats\n");
+    fprintf(stderr, "EMS state must be initialized\n");
+    return 1;
   }
 
-  struct Event* event = get_event_with_delay(parsedArguments->event_id);
+  struct Event* event = get_event_with_delay(event_id);
 
   if (event == NULL) {
-    writeToFile(parsedArguments->fdOut, "Event not found\n");
-    writeToFile(parsedArguments->fdOut, "Failed to reserve seats\n");
+    fprintf(stderr, "Event not found\n");
+    return 1;
   }
 
   unsigned int reservation_id = ++event->reservations;
 
   size_t i = 0;
-  for (; i < parsedArguments->num_coords; i++) {
-    size_t row = parsedArguments->xs[i];
-    size_t col = parsedArguments->ys[i];
+  for (; i < num_seats; i++) {
+    size_t row = xs[i];
+    size_t col = ys[i];
 
     if (row <= 0 || row > event->rows || col <= 0 || col > event->cols) {
-      writeToFile(parsedArguments->fdOut, "Invalid seat\n");
+      fprintf(stderr, "Invalid seat\n");
       break;
     }
 
     if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
-      writeToFile(parsedArguments->fdOut, "Seat already reserved\n");
+      fprintf(stderr, "Seat already reserved\n");
       break;
     }
+
     *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
   }
 
   // If the reservation was not successful, free the seats that were reserved.
-  if (i < parsedArguments->num_coords) {
+  if (i < num_seats) {
     event->reservations--;
     for (size_t j = 0; j < i; j++) {
-      *get_seat_with_delay(event, seat_index(event, parsedArguments->xs[j], parsedArguments->ys[j])) = 0;
+      *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
     }
-    writeToFile(parsedArguments->fdOut, "Failed to reserve seats\n");
+    return 1;
   }
 
-  printf("%d : reservou\n", parsedArguments->threadID);
-  threadState[parsedArguments->threadID] = 1;
   return 0;
 }
 
-void* ems_show(void *arguments) {
-  ThreadArguments *parsedArguments = (ThreadArguments*) arguments;
-  threadState[parsedArguments->threadID] = 2;
+int ems_show(unsigned int event_id, int fd) {
   if (event_list == NULL) {
-    writeToFile(parsedArguments->fdOut, "EMS state must be initialized\n");
-    writeToFile(parsedArguments->fdOut, "Failed to show event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    fprintf(stderr, "EMS state must be initialized\n");
+    return 1;
   }
 
-  struct Event* event = get_event_with_delay(parsedArguments->event_id);
+  struct Event* event = get_event_with_delay(event_id);
 
   if (event == NULL) {
-    writeToFile(parsedArguments->fdOut, "Event not found\n");
-    writeToFile(parsedArguments->fdOut, "Failed to show event\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    fprintf(stderr, "Event not found\n");
+    return 1;
   }
 
-  char buffer[10000];
+  char buffer[5000];
   char smallBuffer[10];
   memset(buffer, 0, sizeof(buffer));
 
@@ -231,32 +207,28 @@ void* ems_show(void *arguments) {
         strcat(buffer, " ");
       }
     }
+
     strcat(buffer, "\n");
   }
 
-  writeToFile(parsedArguments->fdOut,buffer);
-  printf("%d : mostrou\n", parsedArguments->threadID);
-  threadState[parsedArguments->threadID] = 1;
+  writeToFile(fd,buffer);
+
   return 0;
 }
 
-void* ems_list_events(void *arguments) {
-  ThreadArguments *parsedArguments = (ThreadArguments*) arguments;
-  threadState[parsedArguments->threadID] = 2;
+int ems_list_events(int fd) {
   if (event_list == NULL) {
-    writeToFile(parsedArguments->fdOut, "EMS state must be initialized\n");
-    writeToFile(parsedArguments->fdOut, "Failed to list events\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    fprintf(stderr, "EMS state must be initialized\n");
+    return 1;
   }
 
   if (event_list->head == NULL) {
-    writeToFile(parsedArguments->fdOut,"No events\n");
-    threadState[parsedArguments->threadID] = 1;
-    pthread_exit((void*) -1);
+    printf("No events\n");
+    return 0;
   }
 
   struct ListNode* current = event_list->head;
+
   char buffer[5000];
   memset(buffer, 0, sizeof(buffer));
   char smallBuffer[10];
@@ -269,19 +241,13 @@ void* ems_list_events(void *arguments) {
     current = current->next;
   }
 
-  writeToFile(parsedArguments->fdOut, buffer);
-  threadState[parsedArguments->threadID] = 1;
-  printf("%d : listou\n", parsedArguments->threadID);
+  writeToFile(fd, buffer);
   return 0;
 }
 
-void* ems_wait(void *arguments) {
-  ThreadArguments *parsedArguments = (ThreadArguments*) arguments;
-  threadState[parsedArguments->threadID] = 2;
-  struct timespec delay = delay_to_timespec(parsedArguments->delay);
+void ems_wait(unsigned int delay_ms) {
+  struct timespec delay = delay_to_timespec(delay_ms);
   nanosleep(&delay, NULL);
-  threadState[parsedArguments->threadID] = 1;
-  return 0;
 }
 
 int ems_file(char * dirPath,char * filename, int maxThreads){
@@ -308,17 +274,19 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
 
   pthread_t tid[maxThreads];
   int continueReading = 1;
-  long unsigned int m = (long unsigned int) maxThreads;
-  threadState = malloc(sizeof(int)*m);
-  memset(threadState, 0, sizeof(int)*m);
+
+  int threadState[maxThreads];
+  memset(threadState, 0, sizeof(threadState));
+
+  int* arguments[4] = {&fdin, &fdout, NULL, threadState};
   
   while(continueReading){
 
     for(int i = 0; i < maxThreads; i++){
       if (threadState[i] == 0){
-        if (switchCase(fdin, fdout, &tid[i], i, threadState)==2){
-          continueReading = 0;
-          break;
+        arguments[2] = &i;
+        if(pthread_create(&tid[i], 0, switchCase, arguments) != 0){
+          fprintf(stderr, "Error creating thread\n");
         }
         printf("tarefa %d - criou a thread\n",i);
       }
@@ -326,13 +294,23 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
 
     for(int i = 0; i < maxThreads; i++){
       if(threadState[i] == 1){
-        printf("deu join\n");
-        pthread_join(tid[i], NULL);    
+        int *result = NULL;
+        pthread_join(tid[i], (void **)&result);
+        if (*result == 0){
+          continueReading = 0;
+        }
+        free(result);
         threadState[i] = 0;
       }
     }
   }
-  free(threadState);
+
+  for(int i = 0; i < maxThreads; i++){
+    int *result = NULL;
+    pthread_join(tid[i], (void **)&result);
+    free(result);
+  }
+
   close(fdin);
   close(fdout);
   return 0;

@@ -25,30 +25,32 @@ int main(int argc, char *argv[]) {
   }
 
   // MaxProcesses
-  int maxProcesses = atoi(argv[3]);
+  int maxProcesses = atoi(argv[2]);
 
   // MaxThreads
-  int maxThreads = atoi(argv[4]);
+  int maxThreads = atoi(argv[3]);
 
   // Delay
-  char *endptr;
-  unsigned long int delay = strtoul(argv[1], &endptr, 10);
+  if (argc == 5){
+    char *endptr;
+    unsigned long int delay = strtoul(argv[4], &endptr, 10);
 
-  if (*endptr != '\0' || delay > UINT_MAX) {
-    fprintf(stderr, "Invalid delay value or value too large\n");
-    return 1;
-  }
-  state_access_delay_ms = (unsigned int)delay;
-  
+    if (*endptr != '\0' || delay > UINT_MAX) {
+      fprintf(stderr, "Invalid delay value or value too large\n");
+      return 1;
+    }
+    state_access_delay_ms = (unsigned int)delay;
+    
 
-  if (ems_init(state_access_delay_ms)) {
-    fprintf(stderr, "Failed to initialize EMS\n");
-    return 1;
+    if (ems_init(state_access_delay_ms)) {
+      fprintf(stderr, "Failed to initialize EMS\n");
+      return 1;
+    }
   }
 
   // File system
   DIR *dir;
-  dir = opendir(argv[2]);
+  dir = opendir(argv[1]);
   if ( dir == NULL){
     fprintf(stderr, "opendir error: %s\n", strerror(errno));
     return 1;
@@ -86,7 +88,7 @@ int main(int argc, char *argv[]) {
 
     if (pid == 0){
       // Child  
-      if(ems_file(argv[2], file->d_name, maxThreads) == -1){
+      if(ems_file(argv[1], file->d_name, maxThreads) == -1){
         fprintf(stderr, "failed!\n");
         exit(1);
       }

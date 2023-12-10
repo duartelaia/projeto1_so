@@ -16,114 +16,114 @@
 #include "operations.h"
 #include "parser.h"
 
-int switchCase(int fdIn, int fdOut,pthread_t *tid, int threadID, int *threadState){
+void* switchCase(void *arguments){
   unsigned int event_id, delay;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
-  ThreadArguments arguments;
-  arguments.threadID = threadID;
-  arguments.threadState = threadState;
-  arguments.fdOut = fdOut;
+
+  int ** parsedArguments = (int**) arguments;
+  int fdIn = *parsedArguments[0];
+  int fdOut = *parsedArguments[1];
+  int threadID = *parsedArguments[2];
+  int * threadState = parsedArguments[3];
+  threadState[threadID] = 2;
+
+  int * result = malloc(sizeof(int));
+  *result = -1;
 
   switch (get_next(fdIn)) {
-      case CMD_CREATE:
-        if (parse_create(fdIn, &event_id, &num_rows, &num_columns) != 0) {
-          writeToFile(fdOut, "Invalid command. See HELP for usage\n");
-          break;
-        }
+    case CMD_CREATE:
+      if (parse_create(fdIn, &event_id, &num_rows, &num_columns) != 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        threadState[threadID] = 1;
+        pthread_exit(result);
+      }
 
-        arguments.event_id = event_id;
-        arguments.num_columns = num_columns;
-        arguments.num_rows = num_rows;
-  
-        if(pthread_create(tid, NULL, ems_create, &arguments) != 0){
-          fprintf(stderr, "Error creating thread\n");
-        }
+      if (ems_create(event_id, num_rows, num_columns)) {
+        fprintf(stderr, "Failed to create event\n");
+      }
 
-        break;
+      break;
 
-      case CMD_RESERVE:
-        num_coords = parse_reserve(fdIn, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+    case CMD_RESERVE:
+      num_coords = parse_reserve(fdIn, MAX_RESERVATION_SIZE, &event_id, xs, ys);
 
-        if (num_coords == 0) {
-          writeToFile(fdOut, "Invalid command. See HELP for usage\n");
-          break;
-        }
+      if (num_coords == 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        threadState[threadID] = 1;
+        pthread_exit(result);
+      }
 
-        arguments.event_id = event_id;
-        arguments.num_coords = num_coords;
-        arguments.xs = xs;
-        arguments.ys = ys;
+      if (ems_reserve(event_id, num_coords, xs, ys)) {
+        fprintf(stderr, "Failed to reserve seats\n");
+      }
 
-        if(pthread_create(tid, NULL, ems_reserve, &arguments) != 0){
-          fprintf(stderr, "Error creating thread\n");
-        }
+      break;
 
-        break;
+    case CMD_SHOW:
+      if (parse_show(fdIn, &event_id) != 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        threadState[threadID] = 1;
+        pthread_exit(result);
+      }
 
-      case CMD_SHOW:
-        if (parse_show(fdIn, &event_id) != 0) {
-          writeToFile(fdOut, "Invalid command. See HELP for usage\n");
-          break;
-        }
+      if (ems_show(event_id, fdOut)) {
+        fprintf(stderr, "Failed to show event\n");
+      }
 
-        arguments.event_id = event_id;
+      break;
 
-        if(pthread_create(tid, NULL, ems_show, &arguments) != 0){
-          fprintf(stderr, "Error creating thread\n");
-        }
+    case CMD_LIST_EVENTS:
+      if (ems_list_events(fdOut)) {
+        fprintf(stderr, "Failed to list events\n");
+      }
 
-        break;
+      break;
 
-      case CMD_LIST_EVENTS:
-        if(pthread_create(tid, NULL, ems_list_events, &arguments) != 0){
-          fprintf(stderr, "Error creating thread\n");
-        }
+    case CMD_WAIT:
+      if (parse_wait(fdIn, &delay, NULL) == -1) {  // thread_id is not implemented
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        threadState[threadID] = 1;
+        pthread_exit(result);
+      }
 
-        break;
+      if (delay > 0) {
+        printf("Waiting...\n");
+        ems_wait(delay);
+      }
 
-      case CMD_WAIT:
-        if (parse_wait(fdIn, &delay, NULL) == -1) {  // thread_id is not implemented
-          writeToFile(fdOut, "Invalid command. See HELP for usage\n");
-          break;
-        }
+      break;
 
-        arguments.delay = delay;
+    case CMD_INVALID:
+      fprintf(stderr, "Invalid command. See HELP for usage\n");
+      break;
 
-        if (delay > 0) {
-          writeToFile(fdOut,"Waiting...\n");
-          if(pthread_create(tid, NULL, ems_wait, &arguments) != 0){
-            fprintf(stderr, "Error creating thread\n");
-          }
+    case CMD_HELP:
+      printf(
+          "Available commands:\n"
+          "  CREATE <event_id> <num_rows> <num_columns>\n"
+          "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+          "  SHOW <event_id>\n"
+          "  LIST\n"
+          "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
+          "  BARRIER\n"                      // Not implemented
+          "  HELP\n");
 
-        }
+      break;
 
-        break;
+    case CMD_BARRIER:
+      threadState[threadID] = 1;
+      *result = 1;
+      pthread_exit(result);
+    case CMD_EMPTY:
+      break;
 
-      case CMD_INVALID:
-        writeToFile(fdOut, "Invalid command. See HELP for usage\n");
-        break;
-
-      case CMD_HELP:
-        writeToFile(fdOut,
-            "Available commands:\n"
-            "  CREATE <event_id> <num_rows> <num_columns>\n"
-            "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
-            "  SHOW <event_id>\n"
-            "  LIST\n"
-            "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
-            "  BARRIER\n"                      // Not implemented
-            "  HELP\n");
-
-        break;
-
-      case CMD_BARRIER: 
-        return 1;
-      case CMD_EMPTY:
-        break;
-      case EOC:
-        return 2;
-        
-    }
-  return 0;
+    case EOC:
+      threadState[threadID] = 1;
+      *result = 0;
+      pthread_exit(result);
+  }
+  threadState[threadID] = 1;
+  *result = 2;
+  pthread_exit(result);
 }
