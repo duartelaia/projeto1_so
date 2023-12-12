@@ -2,10 +2,12 @@
 #define EMS_OPERATIONS_H
 
 #include <stddef.h>
+#include <pthread.h>
 
 typedef struct arguments{
     int fdin, fdout, id;
     int * threadState;
+    pthread_mutex_t *mutex;
 } Arguments;
 
 int writeToFile(int fd, char * buffer);

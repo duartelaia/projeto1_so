@@ -13,8 +13,7 @@ struct Event {
   unsigned int id;            /// Event id
   unsigned int reservations;  /// Number of reservations for the event.
 
-  int activeReservations;
-  int activeShowers;
+  pthread_rwlock_t rwlock;
 
   size_t cols;  /// Number of columns.
   size_t rows;  /// Number of rows.

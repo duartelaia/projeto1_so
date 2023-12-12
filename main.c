@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <wait.h>
+#include <pthread.h>
 
 #include "constants.h"
 #include "operations.h"
@@ -40,7 +41,6 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     state_access_delay_ms = (unsigned int)delay;
-    
 
     if (ems_init(state_access_delay_ms)) {
       fprintf(stderr, "Failed to initialize EMS\n");

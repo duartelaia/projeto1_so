@@ -18,7 +18,6 @@
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
-
 /// Calculates a timespec from a delay in milliseconds.
 /// @param delay_ms Delay in milliseconds.
 /// @return Timespec with the given delay.
@@ -111,8 +110,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   event->rows = num_rows;
   event->cols = num_cols;
   event->reservations = 0;
-  event->activeReservations = 0;
-  event->activeShowers = 0;
+  pthread_rwlock_init(&event->rwlock,NULL);
   event->data = malloc(num_rows * num_cols * sizeof(struct data));
 
   if (event->data == NULL) {
@@ -150,8 +148,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     return 1;
   }
 
-  while(event->activeShowers!=0);
-  event->activeReservations++;
+  pthread_rwlock_rdlock(&(event->rwlock));
 
   unsigned int reservation_id = ++event->reservations;
 
@@ -169,6 +166,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     
     if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
       fprintf(stderr, "Seat already reserved\n");
+      pthread_mutex_unlock(&event->data->mutex);
       break;
     }
 
@@ -183,11 +181,12 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     for (size_t j = 0; j < i; j++) {
       *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
     }
+    pthread_rwlock_unlock(&(event->rwlock));
     return 1;
   }
 
-  event->activeReservations--;
 
+  pthread_rwlock_unlock(&(event->rwlock));
   printf("reservou evento\n");
   return 0;
 }
@@ -206,8 +205,7 @@ int ems_show(unsigned int event_id, int fd) {
     return 1;
   }
 
-  while(event->activeReservations!=0);
-  event->activeShowers++;
+  pthread_rwlock_wrlock(&(event->rwlock));
 
   char buffer[5000];
   char smallBuffer[10];
@@ -229,9 +227,10 @@ int ems_show(unsigned int event_id, int fd) {
   }
 
   writeToFile(fd,buffer);
-  event->activeShowers--;
+
 
   printf("mostrou evento\n");
+  pthread_rwlock_unlock(&(event->rwlock));
   return 0;
 }
 
@@ -261,6 +260,7 @@ int ems_list_events(int fd) {
   }
 
   writeToFile(fd, buffer);
+  
   printf("listou evento\n");
   return 0;
 }
@@ -297,8 +297,9 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
 
   int threadState[maxThreads];
   memset(threadState, 0, sizeof(threadState));
-  
-  
+
+  pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; 
+
   while(continueReading){
     for(int i = 0; i < maxThreads; i++){
       if (threadState[i] == 0){
@@ -307,6 +308,7 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
         arguments->fdout = fdout;
         arguments->threadState = threadState;
         arguments->id = i;
+        arguments->mutex = &mutex;
         if(pthread_create(&tid[i], 0, switchCase, arguments) != 0){
           fprintf(stderr, "Error creating thread\n");
         }
@@ -319,7 +321,9 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
       for(int i = 0; i < maxThreads; i++){
         if(threadState[i] == 1){
           int *result = NULL;
-          pthread_join(tid[i], (void **)&result);
+          if(pthread_join(tid[i], (void **)&result) || result==NULL){
+            fprintf(stderr, "Error joining thread\n");
+          }
           if (*result == 0){
             continueReading = 0;
           }
@@ -334,10 +338,13 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
   for(int i = 0; i < maxThreads; i++){
     if (threadState[i] != 0){
       int *result = NULL;
-      pthread_join(tid[i], (void **)&result);
+      if(pthread_join(tid[i], (void **)&result)){
+        fprintf(stderr, "Error joining thread\n");
+      }
       free(result);
     }
   }
+
 
   close(fdin);
   close(fdout);
