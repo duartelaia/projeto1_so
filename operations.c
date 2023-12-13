@@ -65,6 +65,23 @@ int writeToFile(int fd, char * buffer){
   return 0;
 }
 
+void swap(size_t *x1, size_t *x2) {
+  size_t temp = *x1;
+  *x1 = *x2;
+  *x2 = temp;
+}
+
+void sortReserves(size_t comparisonArr[], size_t otherArr[], size_t n) {
+  for (size_t i = 0; i < n-1; i++) {
+    for (size_t j = 0; j < n-i-1; j++) {
+      if (comparisonArr[j] > comparisonArr[j+1]) {
+        swap(&comparisonArr[j], &comparisonArr[j+1]);
+        swap(&otherArr[j], &otherArr[j+1]);
+      }
+    }
+  }
+}
+
 int ems_init(unsigned int delay_ms) {
   if (event_list != NULL) {
     fprintf(stderr, "EMS state has already been initialized\n");
@@ -106,6 +123,8 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     return 1;
   }
 
+  pthread_rwlock_rdlock(&event_list->rwlock);
+
   event->id = event_id;
   event->rows = num_rows;
   event->cols = num_cols;
@@ -116,21 +135,24 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   if (event->data == NULL) {
     fprintf(stderr, "Error allocating memory for event data\n");
     free(event);
+    pthread_rwlock_unlock(&event_list->rwlock);
     return 1;
   }
 
   for (size_t i = 0; i < num_rows * num_cols; i++) {
     event->data[i].value = 0;
+    pthread_mutex_init(&event->data[i].mutex, NULL);
   }
 
   if (append_to_list(event_list, event) != 0) {
     fprintf(stderr, "Error appending event to list\n");
     free(event->data);
     free(event);
+    pthread_rwlock_unlock(&event_list->rwlock);
     return 1;
   }
 
-  printf("criou evento\n");
+  pthread_rwlock_unlock(&event_list->rwlock);
   return 0;
 }
 
@@ -151,6 +173,9 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   pthread_rwlock_rdlock(&(event->rwlock));
 
   unsigned int reservation_id = ++event->reservations;
+
+  sortReserves(xs, ys, num_seats);
+  sortReserves(ys, xs, num_seats);
 
   size_t i = 0;
   for (; i < num_seats; i++) {
@@ -187,7 +212,6 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
 
 
   pthread_rwlock_unlock(&(event->rwlock));
-  printf("reservou evento\n");
   return 0;
 }
 
@@ -207,7 +231,7 @@ int ems_show(unsigned int event_id, int fd) {
 
   pthread_rwlock_wrlock(&(event->rwlock));
 
-  char buffer[5000];
+  char buffer[10000];
   char smallBuffer[10];
   memset(buffer, 0, sizeof(buffer));
 
@@ -229,7 +253,6 @@ int ems_show(unsigned int event_id, int fd) {
   writeToFile(fd,buffer);
 
 
-  printf("mostrou evento\n");
   pthread_rwlock_unlock(&(event->rwlock));
   return 0;
 }
@@ -245,9 +268,11 @@ int ems_list_events(int fd) {
     return 0;
   }
 
+  pthread_rwlock_wrlock(&event_list->rwlock);
+
   struct ListNode* current = event_list->head;
 
-  char buffer[5000];
+  char buffer[10000];
   memset(buffer, 0, sizeof(buffer));
   char smallBuffer[10];
 
@@ -261,7 +286,7 @@ int ems_list_events(int fd) {
 
   writeToFile(fd, buffer);
   
-  printf("listou evento\n");
+  pthread_rwlock_unlock(&event_list->rwlock);
   return 0;
 }
 
@@ -293,12 +318,18 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
   }
 
   pthread_t tid[maxThreads];
-  int continueReading = 1, threadFinished=0;
+  int continueReading = 1, threadsFinished=0, barrierFound=0, activeThreads=0;
 
   int threadState[maxThreads];
   memset(threadState, 0, sizeof(threadState));
 
-  pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; 
+  unsigned int threadWait[maxThreads];
+  memset(threadWait, 0, sizeof(threadWait));
+
+  int threadResult[maxThreads];
+  memset(threadResult, 0, sizeof(threadResult));
+
+  pthread_mutex_t parseMutex = PTHREAD_MUTEX_INITIALIZER;
 
   while(continueReading){
     for(int i = 0; i < maxThreads; i++){
@@ -308,30 +339,43 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
         arguments->fdout = fdout;
         arguments->threadState = threadState;
         arguments->id = i;
-        arguments->mutex = &mutex;
+        arguments->parseMutex = &parseMutex;
+        arguments->threadResult = threadResult;
+        arguments->threadWait = threadWait;
+        if(i != 0 && threadResult[i-1]==1){
+          free(arguments);
+          barrierFound = 1;
+          break;
+        }
         if(pthread_create(&tid[i], 0, switchCase, arguments) != 0){
           fprintf(stderr, "Error creating thread\n");
         }
-        printf("tarefa %d - criou a thread\n",i);
+        activeThreads++;
       }
     }
 
-    threadFinished = 0;
-    while (!threadFinished){
+    threadsFinished = 0;
+    while (threadsFinished == 0 || barrierFound){
       for(int i = 0; i < maxThreads; i++){
         if(threadState[i] == 1){
-          int *result = NULL;
-          if(pthread_join(tid[i], (void **)&result) || result==NULL){
+          if(pthread_join(tid[i], NULL)){
             fprintf(stderr, "Error joining thread\n");
           }
-          if (*result == 0){
+
+          if(threadResult[i]==0){
             continueReading = 0;
           }
-          free(result);
+          else if(threadResult[i]==1){
+            barrierFound = 1;
+          }
+          
           threadState[i] = 0;
-          threadFinished = 1;
+          threadsFinished++;
+          activeThreads--;
         }
       }
+      if(barrierFound && activeThreads==0)
+        barrierFound = 0;
     }
   }
   

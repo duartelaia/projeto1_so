@@ -6,8 +6,9 @@
 
 typedef struct arguments{
     int fdin, fdout, id;
-    int * threadState;
-    pthread_mutex_t *mutex;
+    int * threadState, *threadResult;
+    unsigned int *threadWait;
+    pthread_mutex_t *parseMutex;
 } Arguments;
 
 int writeToFile(int fd, char * buffer);

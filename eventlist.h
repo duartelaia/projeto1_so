@@ -28,6 +28,7 @@ struct ListNode {
 
 // Linked list structure
 struct EventList {
+  pthread_rwlock_t rwlock;
   struct ListNode* head;  // Head of the list
   struct ListNode* tail;  // Tail of the list
 };

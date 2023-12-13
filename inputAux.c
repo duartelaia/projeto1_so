@@ -18,7 +18,7 @@
 #include "inputAux.h"
 
 void* switchCase(void *arguments){
-  unsigned int event_id, delay;
+  unsigned int event_id, delay, thread_id;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
@@ -27,27 +27,29 @@ void* switchCase(void *arguments){
   int fdOut = parsedArguments->fdout;
   int threadID = parsedArguments->id;
   int * threadState = parsedArguments->threadState;
-  pthread_mutex_t * switchCaseMutex = parsedArguments->mutex;
+  int * threadResult = parsedArguments->threadResult;
+  unsigned int * threadWait = parsedArguments->threadWait;
+  pthread_mutex_t * parseMutex = parsedArguments->parseMutex;
   free(arguments);
   threadState[threadID] = 2;
+  threadResult[threadID] = -1;
 
-  int * result = malloc(sizeof(int));
-  if(result == NULL) 
-    pthread_exit(NULL);
+  if(threadWait[threadID] != 0){
+    ems_wait(threadWait[threadID]);
+    threadWait[threadID] = 0;
+  }
 
-  *result = -1;
-
-  pthread_mutex_lock(switchCaseMutex);
-
+  pthread_mutex_lock(parseMutex);
+  
   switch (get_next(fdIn)) {
     case CMD_CREATE:
       if (parse_create(fdIn, &event_id, &num_rows, &num_columns) != 0) {
         fprintf(stderr, "Invalid command. See HELP for usage\n");
-        threadState[threadID] = 1;
-        pthread_exit(result);
+        threadResult[threadID] = 1;
+        return 0;
       }
 
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
 
       if (ems_create(event_id, num_rows, num_columns)) {
         fprintf(stderr, "Failed to create event\n");
@@ -60,11 +62,11 @@ void* switchCase(void *arguments){
 
       if (num_coords == 0) {
         fprintf(stderr, "Invalid command. See HELP for usage\n");
-        threadState[threadID] = 1;
-        pthread_exit(result);
+        threadResult[threadID] = 1;
+        return 0;
       }
 
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
 
       if (ems_reserve(event_id, num_coords, xs, ys)) {
         fprintf(stderr, "Failed to reserve seats\n");
@@ -75,10 +77,10 @@ void* switchCase(void *arguments){
     case CMD_SHOW:
       if (parse_show(fdIn, &event_id) != 0) {
         fprintf(stderr, "Invalid command. See HELP for usage\n");
-        threadState[threadID] = 1;
-        pthread_exit(result);
+        threadResult[threadID] = 1;
+        return 0;
       }
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
 
       if (ems_show(event_id, fdOut)) {
         fprintf(stderr, "Failed to show event\n");
@@ -87,7 +89,7 @@ void* switchCase(void *arguments){
       break;
 
     case CMD_LIST_EVENTS:
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
 
       if (ems_list_events(fdOut)) {
         fprintf(stderr, "Failed to list events\n");
@@ -96,19 +98,23 @@ void* switchCase(void *arguments){
       break;
 
     case CMD_WAIT:
-      if (parse_wait(fdIn, &delay, NULL) == -1) {  // thread_id is not implemented
+      if (parse_wait(fdIn, &delay, &thread_id) == -1) {
         fprintf(stderr, "Invalid command. See HELP for usage\n");
-        threadState[threadID] = 1;
-        pthread_exit(result);
+        threadResult[threadID] = 1;
+        return 0;
       }
 
-      pthread_mutex_unlock(switchCaseMutex);
+
+      pthread_mutex_unlock(parseMutex);
 
       if (delay > 0) {
         printf("Waiting...\n");
-        ems_wait(delay);
+        
+        if(thread_id==0)
+          ems_wait(delay);
+        else
+          threadWait[--thread_id] = delay;
       }
-
       break;
 
     case CMD_INVALID:
@@ -116,7 +122,7 @@ void* switchCase(void *arguments){
       break;
 
     case CMD_HELP:
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
       printf(
           "Available commands:\n"
           "  CREATE <event_id> <num_rows> <num_columns>\n"
@@ -130,22 +136,23 @@ void* switchCase(void *arguments){
       break;
 
     case CMD_BARRIER:
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
       threadState[threadID] = 1;
-      *result = 1;
-      pthread_exit(result);
+      threadResult[threadID] = 1;
+      return 0;
     case CMD_EMPTY:
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
       break;
 
     case EOC:
-      pthread_mutex_unlock(switchCaseMutex);
+      pthread_mutex_unlock(parseMutex);
       threadState[threadID] = 1;
-      *result = 0;
-      pthread_exit(result);
+      threadResult[threadID] = 0;
+      return 0;
   }
-  pthread_mutex_unlock(switchCaseMutex);
+
+  pthread_mutex_unlock(parseMutex);
   threadState[threadID] = 1;
-  *result = 2;
-  pthread_exit(result);
+  threadResult[threadID] = 2;
+  return 0;
 }

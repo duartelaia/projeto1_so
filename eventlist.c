@@ -1,10 +1,12 @@
 #include "eventlist.h"
 
 #include <stdlib.h>
+#include <pthread.h>
 
 struct EventList* create_list() {
   struct EventList* list = (struct EventList*)malloc(sizeof(struct EventList));
   if (!list) return NULL;
+  pthread_rwlock_init(&list->rwlock,NULL);
   list->head = NULL;
   list->tail = NULL;
   return list;
