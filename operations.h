@@ -6,9 +6,6 @@
 
 typedef struct arguments{
     int fdin, fdout, id;
-    int * threadState, *threadResult;
-    unsigned int *threadWait;
-    pthread_mutex_t *parseMutex;
 } Arguments;
 
 int writeToFile(int fd, char * buffer);
@@ -53,5 +50,9 @@ void ems_wait(unsigned int delay_ms);
 /// @param dirpath the path to the dir.
 /// @return 0 if all went sucessfully, 1 otherwise.
 int ems_file(char * dirpath,char *filename, int maxThreads);
+
+int switchCase(int fdIn, int fdOut, int threadID);
+
+void * threadFunc(void* arguments);
 
 #endif  // EMS_OPERATIONS_H

@@ -13,7 +13,7 @@ struct Event {
   unsigned int id;            /// Event id
   unsigned int reservations;  /// Number of reservations for the event.
 
-  pthread_rwlock_t rwlock;
+  pthread_rwlock_t eventLock;
 
   size_t cols;  /// Number of columns.
   size_t rows;  /// Number of rows.
@@ -28,7 +28,6 @@ struct ListNode {
 
 // Linked list structure
 struct EventList {
-  pthread_rwlock_t rwlock;
   struct ListNode* head;  // Head of the list
   struct ListNode* tail;  // Tail of the list
 };

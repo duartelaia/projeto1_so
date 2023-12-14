@@ -16,7 +16,6 @@
 #include "constants.h"
 #include "operations.h"
 #include "parser.h"
-#include "inputAux.h"
 
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
@@ -64,7 +63,7 @@ int main(int argc, char *argv[]) {
       // Wait for any process to end
       int state;
       wait(&state);
-      printf("%d\n", state);
+      printf("Process ended with state: %d\n", state);
       process_counter--;
     }
       
@@ -103,7 +102,7 @@ int main(int argc, char *argv[]) {
   while (process_counter > 0){
     int state;
     wait(&state);
-    printf("%d\n", state);
+    printf("Process ended with state: %d\n", state);
     process_counter--;
   }
   

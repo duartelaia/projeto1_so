@@ -13,8 +13,15 @@
 #include <pthread.h>
 
 #include "eventlist.h"
+#include "constants.h"
 #include "operations.h"
-#include "inputAux.h"
+#include "parser.h"
+
+pthread_mutex_t parseMutex;
+pthread_rwlock_t createEventLock;
+pthread_rwlock_t waitCommandLock;
+int barrierFound = 0;
+unsigned int * threadWait;
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
@@ -111,10 +118,12 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     return 1;
   }
 
+  pthread_rwlock_rdlock(&createEventLock);
   if (get_event_with_delay(event_id) != NULL) {
     fprintf(stderr, "Event already exists\n");
     return 1;
   }
+  pthread_rwlock_unlock(&createEventLock);
 
   struct Event* event = malloc(sizeof(struct Event));
 
@@ -123,19 +132,16 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     return 1;
   }
 
-  pthread_rwlock_rdlock(&event_list->rwlock);
-
   event->id = event_id;
   event->rows = num_rows;
   event->cols = num_cols;
   event->reservations = 0;
-  pthread_rwlock_init(&event->rwlock,NULL);
+  pthread_rwlock_init(&event->eventLock, NULL);
   event->data = malloc(num_rows * num_cols * sizeof(struct data));
 
   if (event->data == NULL) {
     fprintf(stderr, "Error allocating memory for event data\n");
     free(event);
-    pthread_rwlock_unlock(&event_list->rwlock);
     return 1;
   }
 
@@ -144,35 +150,41 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     pthread_mutex_init(&event->data[i].mutex, NULL);
   }
 
+  pthread_rwlock_wrlock(&createEventLock);
   if (append_to_list(event_list, event) != 0) {
     fprintf(stderr, "Error appending event to list\n");
     free(event->data);
     free(event);
-    pthread_rwlock_unlock(&event_list->rwlock);
+    pthread_rwlock_unlock(&createEventLock);
     return 1;
   }
 
-  pthread_rwlock_unlock(&event_list->rwlock);
+  pthread_rwlock_unlock(&createEventLock);
   return 0;
 }
 
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
-  
+
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
   }
 
+  pthread_rwlock_rdlock(&createEventLock);
   struct Event* event = get_event_with_delay(event_id);
+  pthread_rwlock_unlock(&createEventLock);
+
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
     return 1;
   }
-
-  pthread_rwlock_rdlock(&(event->rwlock));
-
+  
+  pthread_rwlock_wrlock(&event->eventLock);
   unsigned int reservation_id = ++event->reservations;
+  pthread_rwlock_unlock(&event->eventLock);
+  
+  pthread_rwlock_rdlock(&event->eventLock);
 
   sortReserves(xs, ys, num_seats);
   sortReserves(ys, xs, num_seats);
@@ -204,14 +216,14 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   if (i < num_seats) {
     event->reservations--;
     for (size_t j = 0; j < i; j++) {
+      pthread_mutex_lock(&event->data->mutex);
       *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
+      pthread_mutex_unlock(&event->data->mutex);
     }
-    pthread_rwlock_unlock(&(event->rwlock));
+    pthread_rwlock_unlock(&event->eventLock);
     return 1;
   }
-
-
-  pthread_rwlock_unlock(&(event->rwlock));
+  pthread_rwlock_unlock(&event->eventLock);
   return 0;
 }
 
@@ -222,14 +234,16 @@ int ems_show(unsigned int event_id, int fd) {
     return 1;
   }
 
+  pthread_rwlock_rdlock(&createEventLock);
   struct Event* event = get_event_with_delay(event_id);
+  pthread_rwlock_unlock(&createEventLock);
+
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
     return 1;
   }
-
-  pthread_rwlock_wrlock(&(event->rwlock));
+  pthread_rwlock_wrlock(&event->eventLock);
 
   char buffer[10000];
   char smallBuffer[10];
@@ -251,13 +265,14 @@ int ems_show(unsigned int event_id, int fd) {
   }
 
   writeToFile(fd,buffer);
+  pthread_rwlock_unlock(&event->eventLock);
 
-
-  pthread_rwlock_unlock(&(event->rwlock));
   return 0;
 }
 
 int ems_list_events(int fd) {
+  
+  pthread_rwlock_wrlock(&createEventLock);
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -268,14 +283,13 @@ int ems_list_events(int fd) {
     return 0;
   }
 
-  pthread_rwlock_wrlock(&event_list->rwlock);
-
   struct ListNode* current = event_list->head;
 
   char buffer[10000];
   memset(buffer, 0, sizeof(buffer));
   char smallBuffer[10];
 
+  
   while (current != NULL) {
     strcat(buffer,"Event: ");
     snprintf(smallBuffer, sizeof(smallBuffer), "%u", (current->event)->id);
@@ -285,8 +299,8 @@ int ems_list_events(int fd) {
   }
 
   writeToFile(fd, buffer);
+  pthread_rwlock_unlock(&createEventLock);
   
-  pthread_rwlock_unlock(&event_list->rwlock);
   return 0;
 }
 
@@ -317,81 +331,192 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
       return -1;
   }
 
+  pthread_mutex_init(&parseMutex, NULL); 
+  pthread_rwlock_init(&createEventLock, NULL);
+  pthread_rwlock_init(&waitCommandLock,NULL);
+
+  long unsigned int max = (long unsigned int) maxThreads;
+  long unsigned int size = max * sizeof(int);
+  threadWait = malloc(size);
+  memset(threadWait, 0, size);
+
   pthread_t tid[maxThreads];
-  int continueReading = 1, threadsFinished=0, barrierFound=0, activeThreads=0;
 
-  int threadState[maxThreads];
-  memset(threadState, 0, sizeof(threadState));
-
-  unsigned int threadWait[maxThreads];
-  memset(threadWait, 0, sizeof(threadWait));
-
-  int threadResult[maxThreads];
-  memset(threadResult, 0, sizeof(threadResult));
-
-  pthread_mutex_t parseMutex = PTHREAD_MUTEX_INITIALIZER;
-
-  while(continueReading){
-    for(int i = 0; i < maxThreads; i++){
-      if (threadState[i] == 0){
-        Arguments * arguments = malloc(sizeof(struct arguments));
-        arguments->fdin = fdin;
-        arguments->fdout = fdout;
-        arguments->threadState = threadState;
-        arguments->id = i;
-        arguments->parseMutex = &parseMutex;
-        arguments->threadResult = threadResult;
-        arguments->threadWait = threadWait;
-        if(i != 0 && threadResult[i-1]==1){
-          free(arguments);
-          barrierFound = 1;
-          break;
-        }
-        if(pthread_create(&tid[i], 0, switchCase, arguments) != 0){
-          fprintf(stderr, "Error creating thread\n");
-        }
-        activeThreads++;
-      }
-    }
-
-    threadsFinished = 0;
-    while (threadsFinished == 0 || barrierFound){
-      for(int i = 0; i < maxThreads; i++){
-        if(threadState[i] == 1){
-          if(pthread_join(tid[i], NULL)){
-            fprintf(stderr, "Error joining thread\n");
-          }
-
-          if(threadResult[i]==0){
-            continueReading = 0;
-          }
-          else if(threadResult[i]==1){
-            barrierFound = 1;
-          }
-          
-          threadState[i] = 0;
-          threadsFinished++;
-          activeThreads--;
-        }
-      }
-      if(barrierFound && activeThreads==0)
-        barrierFound = 0;
-    }
-  }
+  int keepReading = 1;
   
-  for(int i = 0; i < maxThreads; i++){
-    if (threadState[i] != 0){
+  while(keepReading){
+    keepReading = 1;
+    barrierFound = 0;
+    for(int i = 0; i < maxThreads; i++){
+      Arguments * arguments = malloc(sizeof(struct arguments));
+      arguments->fdin = fdin;
+      arguments->fdout = fdout;
+      arguments->id = i;
+      if(pthread_create(&tid[i], 0, threadFunc, arguments) != 0){
+        fprintf(stderr, "Error creating thread\n");
+      }
+    }
+    
+    for(int i = 0; i < maxThreads; i++){
       int *result = NULL;
       if(pthread_join(tid[i], (void **)&result)){
         fprintf(stderr, "Error joining thread\n");
       }
+      if(keepReading != 0)
+        keepReading = *result;
+      
       free(result);
     }
   }
 
-
+  free(threadWait);
   close(fdin);
   close(fdout);
   return 0;
+}
+
+void * threadFunc(void* arguments){
+  Arguments * parsedArguments = (Arguments*) arguments;
+  int fdIn = parsedArguments->fdin;
+  int fdOut = parsedArguments->fdout;
+  int threadID = parsedArguments->id;
+  free(parsedArguments);
+
+  int * res = malloc(sizeof(int));
+
+  while(1){
+    *res = switchCase(fdIn, fdOut, threadID);
+    if(*res == 0 || *res == 1)
+      break;
+  }
+
+  pthread_exit(res);
+}
+
+int switchCase(int fdIn, int fdOut, int threadID){
+  unsigned int event_id, delay, thread_id;
+  size_t num_rows, num_columns, num_coords;
+  size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
+
+  pthread_rwlock_rdlock(&waitCommandLock);
+  if(threadWait[threadID]!=0){
+    ems_wait(threadWait[threadID]);
+  }
+  pthread_rwlock_unlock(&waitCommandLock);
+
+  pthread_mutex_lock(&parseMutex);
+
+  if(barrierFound){
+    pthread_mutex_unlock(&parseMutex);
+    return 1;
+  }
+
+  
+  switch (get_next(fdIn)) {
+    case CMD_CREATE:
+      if (parse_create(fdIn, &event_id, &num_rows, &num_columns) != 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        return -1;
+      }
+
+      pthread_mutex_unlock(&parseMutex);
+
+      if (ems_create(event_id, num_rows, num_columns)) {
+        fprintf(stderr, "Failed to create event\n");
+      }
+
+      break;
+
+    case CMD_RESERVE:
+      num_coords = parse_reserve(fdIn, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+
+      if (num_coords == 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        return -1;
+      }
+
+      pthread_mutex_unlock(&parseMutex);
+
+      if (ems_reserve(event_id, num_coords, xs, ys)) {
+        fprintf(stderr, "Failed to reserve seats\n");
+      }
+
+      break;
+
+    case CMD_SHOW:
+      if (parse_show(fdIn, &event_id) != 0) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        return -1;
+      }
+      pthread_mutex_unlock(&parseMutex);
+
+      if (ems_show(event_id, fdOut)) {
+        fprintf(stderr, "Failed to show event\n");
+      }
+
+      break;
+
+    case CMD_LIST_EVENTS:
+      pthread_mutex_unlock(&parseMutex);
+
+      if (ems_list_events(fdOut)) {
+        fprintf(stderr, "Failed to list events\n");
+      }
+
+      break;
+
+    case CMD_WAIT:
+      if (parse_wait(fdIn, &delay, &thread_id) == -1) {
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        return -1;
+      }
+
+      pthread_mutex_unlock(&parseMutex);
+
+      if (delay > 0) {
+        printf("Waiting...\n");
+        
+        if(thread_id==0)
+          ems_wait(delay);
+        else{
+          pthread_rwlock_wrlock(&waitCommandLock);
+          threadWait[--thread_id] = delay;
+          pthread_rwlock_unlock(&waitCommandLock);
+        }
+      }
+      break;
+
+    case CMD_INVALID:
+      fprintf(stderr, "Invalid command. See HELP for usage\n");
+      break;
+
+    case CMD_HELP:
+      pthread_mutex_unlock(&parseMutex);
+      printf(
+          "Available commands:\n"
+          "  CREATE <event_id> <num_rows> <num_columns>\n"
+          "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+          "  SHOW <event_id>\n"
+          "  LIST\n"
+          "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
+          "  BARRIER\n"                      // Not implemented
+          "  HELP\n");
+
+      break;
+
+    case CMD_BARRIER:
+      barrierFound = 1;
+      pthread_mutex_unlock(&parseMutex);
+      return 1;
+    case CMD_EMPTY:
+      pthread_mutex_unlock(&parseMutex);
+      break;
+
+    case EOC:
+      pthread_mutex_unlock(&parseMutex);
+      return 0;
+  }
+
+  return 2;
 }
 
