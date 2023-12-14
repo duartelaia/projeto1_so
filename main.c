@@ -2,8 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-// novos
-// imports novos a partir daqui 
+ 
 #include <dirent.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -30,10 +29,11 @@ int main(int argc, char *argv[]) {
   // MaxThreads
   int maxThreads = atoi(argv[3]);
 
+  unsigned long int delay = 0;
   // Delay
   if (argc == 5){
     char *endptr;
-    unsigned long int delay = strtoul(argv[4], &endptr, 10);
+    delay = strtoul(argv[4], &endptr, 10);
 
     if (*endptr != '\0' || delay > UINT_MAX) {
       fprintf(stderr, "Invalid delay value or value too large\n");
@@ -41,10 +41,11 @@ int main(int argc, char *argv[]) {
     }
     state_access_delay_ms = (unsigned int)delay;
 
-    if (ems_init(state_access_delay_ms)) {
-      fprintf(stderr, "Failed to initialize EMS\n");
-      return 1;
-    }
+  }
+  
+  if (ems_init(state_access_delay_ms)) {
+    fprintf(stderr, "Failed to initialize EMS\n");
+    return 1;
   }
 
   // File system

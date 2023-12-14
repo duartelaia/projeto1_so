@@ -8,6 +8,10 @@ typedef struct arguments{
     int fdin, fdout, id;
 } Arguments;
 
+/// Writes to file.
+/// @param fd File descriptor of the file to write to
+/// @param buffer String to write
+/// @return 0 if the EMS state was initialized successfully, 1 otherwise.
 int writeToFile(int fd, char * buffer);
 
 /// Initializes the EMS state.
@@ -48,11 +52,21 @@ void ems_wait(unsigned int delay_ms);
 
 /// read all the .job files.
 /// @param dirpath the path to the dir.
+/// @param filename name of the file to open.
+/// @param maxThreads maximum number of threads to open
 /// @return 0 if all went sucessfully, 1 otherwise.
 int ems_file(char * dirpath,char *filename, int maxThreads);
 
+/// Compute a line of a file
+/// @param fdin file descriptor of the file to read from.
+/// @param fdout file descriptor of the file to write to
+/// @param threadID id of the current thread
+/// @return 0 if EOF, 1 if Barrier found and 2 if another command was found
 int switchCase(int fdIn, int fdOut, int threadID);
 
+/// Main function of a thread
+/// @param arguments arguments of each thread.
+/// @return 0 if EOF, 1 if Barrier found
 void * threadFunc(void* arguments);
 
 #endif  // EMS_OPERATIONS_H

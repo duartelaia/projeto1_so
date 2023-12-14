@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-// novos 
-// imports novos a partir daqui 
+
 #include <dirent.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -17,11 +16,11 @@
 #include "operations.h"
 #include "parser.h"
 
-pthread_mutex_t parseMutex;
-pthread_rwlock_t createEventLock;
-pthread_rwlock_t waitCommandLock;
-int barrierFound = 0;
-unsigned int * threadWait;
+pthread_mutex_t parseMutex;         // Lock for parsing command
+pthread_rwlock_t createEventLock;   // Lock for creating events
+pthread_rwlock_t waitCommandLock;   // Lock for the Wait command
+int barrierFound = 0;               // Flag for Barrier command
+unsigned int * threadWait;          // List of time for each thread to wait before executing
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
@@ -121,6 +120,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   pthread_rwlock_rdlock(&createEventLock);
   if (get_event_with_delay(event_id) != NULL) {
     fprintf(stderr, "Event already exists\n");
+    pthread_rwlock_unlock(&createEventLock);
     return 1;
   }
   pthread_rwlock_unlock(&createEventLock);
@@ -211,10 +211,13 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
 
     pthread_mutex_unlock(&event->data->mutex);
   }
+  pthread_rwlock_unlock(&event->eventLock);
 
   // If the reservation was not successful, free the seats that were reserved.
   if (i < num_seats) {
+    pthread_rwlock_wrlock(&event->eventLock);
     event->reservations--;
+
     for (size_t j = 0; j < i; j++) {
       pthread_mutex_lock(&event->data->mutex);
       *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
@@ -223,7 +226,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     pthread_rwlock_unlock(&event->eventLock);
     return 1;
   }
-  pthread_rwlock_unlock(&event->eventLock);
+  
   return 0;
 }
 
@@ -275,26 +278,28 @@ int ems_list_events(int fd) {
   pthread_rwlock_wrlock(&createEventLock);
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
+    pthread_rwlock_unlock(&createEventLock);
     return 1;
   }
 
   if (event_list->head == NULL) {
-    printf("No events\n");
+    writeToFile(fd, "No events\n");
+    pthread_rwlock_unlock(&createEventLock);
     return 0;
   }
-
   struct ListNode* current = event_list->head;
 
   char buffer[10000];
   memset(buffer, 0, sizeof(buffer));
   char smallBuffer[10];
 
-  
   while (current != NULL) {
+    pthread_rwlock_wrlock(&current->event->eventLock);
     strcat(buffer,"Event: ");
     snprintf(smallBuffer, sizeof(smallBuffer), "%u", (current->event)->id);
     strcat(buffer, smallBuffer);
     strcat(buffer, "\n");
+    pthread_rwlock_unlock(&current->event->eventLock);
     current = current->next;
   }
 
@@ -356,7 +361,6 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
         fprintf(stderr, "Error creating thread\n");
       }
     }
-    
     for(int i = 0; i < maxThreads; i++){
       int *result = NULL;
       if(pthread_join(tid[i], (void **)&result)){
@@ -381,7 +385,6 @@ void * threadFunc(void* arguments){
   int fdOut = parsedArguments->fdout;
   int threadID = parsedArguments->id;
   free(parsedArguments);
-
   int * res = malloc(sizeof(int));
 
   while(1){
@@ -398,9 +401,10 @@ int switchCase(int fdIn, int fdOut, int threadID){
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
-  pthread_rwlock_rdlock(&waitCommandLock);
+  pthread_rwlock_wrlock(&waitCommandLock);
   if(threadWait[threadID]!=0){
     ems_wait(threadWait[threadID]);
+    threadWait[threadID]=0;
   }
   pthread_rwlock_unlock(&waitCommandLock);
 
@@ -411,7 +415,6 @@ int switchCase(int fdIn, int fdOut, int threadID){
     return 1;
   }
 
-  
   switch (get_next(fdIn)) {
     case CMD_CREATE:
       if (parse_create(fdIn, &event_id, &num_rows, &num_columns) != 0) {
