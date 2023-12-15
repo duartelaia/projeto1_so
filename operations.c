@@ -118,13 +118,13 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
     return 1;
   }
 
-  pthread_rwlock_rdlock(&createEventLock);
+  if(pthread_rwlock_rdlock(&createEventLock)!=0){return -1;}
   if (get_event_with_delay(event_id) != NULL) {
     fprintf(stderr, "Event already exists\n");
-    pthread_rwlock_unlock(&createEventLock);
+    if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
     return 1;
   }
-  pthread_rwlock_unlock(&createEventLock);
+  if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
 
   struct Event* event = malloc(sizeof(struct Event));
 
@@ -147,19 +147,19 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
 
   for (size_t i = 0; i < num_rows * num_cols; i++) {
     event->data[i].value = 0;
-    pthread_rwlock_init(&event->data[i].seatLock, NULL);
+    if(pthread_rwlock_init(&event->data[i].seatLock, NULL)!=0){return -1;}
   }
 
-  pthread_rwlock_wrlock(&createEventLock);
+  if (pthread_rwlock_wrlock(&createEventLock) != 0){return -1;}
   if (append_to_list(event_list, event) != 0) {
     fprintf(stderr, "Error appending event to list\n");
     free(event->data);
     free(event);
-    pthread_rwlock_unlock(&createEventLock);
+    if(pthread_rwlock_unlock(&createEventLock)!= 0){return -1;}
     return 1;
   }
 
-  pthread_rwlock_unlock(&createEventLock);
+  if(pthread_rwlock_unlock(&createEventLock)!= 0){return -1;}
   return 0;
 }
 
@@ -170,9 +170,9 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     return 1;
   }
 
-  pthread_rwlock_rdlock(&createEventLock);
+  if(pthread_rwlock_rdlock(&createEventLock)!=0){return -1;}
   struct Event* event = get_event_with_delay(event_id);
-  pthread_rwlock_unlock(&createEventLock);
+  if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
@@ -197,11 +197,11 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     }
 
     size_t seatIndex = seat_index(event, row, col);
-    pthread_rwlock_wrlock(&event->data[seatIndex].seatLock);
+    if(pthread_rwlock_wrlock(&event->data[seatIndex].seatLock)!=0){return -1;}
     
     if (*get_seat_with_delay(event, seatIndex) != 0) {
       fprintf(stderr, "Seat already reserved\n");
-      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+      if(pthread_rwlock_unlock(&event->data[seatIndex].seatLock)!=0){return -1;}
       break;
     }
 
@@ -210,17 +210,17 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   
   // If the reservation was not successful, free the seats that were reserved.
   if (i < num_seats) {
-    atomic_store(&event->reservations, --reservation_id);
+    //atomic_store(&event->reservations, --reservation_id);
     for (size_t j = 0; j < i; j++) {
       size_t seatIndex = seat_index(event, xs[j], ys[j]);
       *get_seat_with_delay(event, seatIndex) = 0;
-      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+      if(pthread_rwlock_unlock(&event->data[seatIndex].seatLock)!=0){return -1;}
     }
     return 1;
   }else{
     for (size_t j = 0; j < i; j++) {
       size_t seatIndex = seat_index(event, xs[j], ys[j]);
-      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+      if(pthread_rwlock_unlock(&event->data[seatIndex].seatLock)!=0){return -1;}
     }
     return 0;
   }
@@ -233,9 +233,9 @@ int ems_show(unsigned int event_id, int fd) {
     return 1;
   }
 
-  pthread_rwlock_rdlock(&createEventLock);
+  if(pthread_rwlock_rdlock(&createEventLock)!=0){return -1;}
   struct Event* event = get_event_with_delay(event_id);
-  pthread_rwlock_unlock(&createEventLock);
+  if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
 
 
   if (event == NULL) {
@@ -251,7 +251,7 @@ int ems_show(unsigned int event_id, int fd) {
     for (size_t j = 1; j <= event->cols; j++) {
 
       size_t seatIndex = seat_index(event, i, j);
-      pthread_rwlock_rdlock(&event->data[seatIndex].seatLock);
+      if(pthread_rwlock_rdlock(&event->data[seatIndex].seatLock)!=0){return -1;}
 
       unsigned int* seat = get_seat_with_delay(event, seatIndex);
 
@@ -270,7 +270,7 @@ int ems_show(unsigned int event_id, int fd) {
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       size_t seatIndex = seat_index(event, i, j);
-      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+      if(pthread_rwlock_unlock(&event->data[seatIndex].seatLock)!= 0){return -1;}
     }
   }
 
@@ -281,16 +281,16 @@ int ems_show(unsigned int event_id, int fd) {
 
 int ems_list_events(int fd) {
   
-  pthread_rwlock_wrlock(&createEventLock);
+  if(pthread_rwlock_wrlock(&createEventLock)!=0){return -1;}
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
-    pthread_rwlock_unlock(&createEventLock);
+    if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
     return 1;
   }
 
   if (event_list->head == NULL) {
     writeToFile(fd, "No events\n");
-    pthread_rwlock_unlock(&createEventLock);
+    if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
     return 0;
   }
   struct ListNode* current = event_list->head;
@@ -308,7 +308,7 @@ int ems_list_events(int fd) {
   }
 
   writeToFile(fd, buffer);
-  pthread_rwlock_unlock(&createEventLock);
+  if(pthread_rwlock_unlock(&createEventLock)!=0){return -1;}
   
   return 0;
 }
@@ -340,13 +340,14 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
       return -1;
   }
 
-  pthread_mutex_init(&parseMutex, NULL); 
-  pthread_rwlock_init(&createEventLock, NULL);
-  pthread_rwlock_init(&waitCommandLock,NULL);
+  if (pthread_mutex_init(&parseMutex, NULL)!= 0){return -1;}
+  if (pthread_rwlock_init(&createEventLock, NULL)!=0){return -1;}
+  if (pthread_rwlock_init(&waitCommandLock,NULL)!=0){return -1;}
 
   long unsigned int max = (long unsigned int) maxThreads;
   long unsigned int size = max * sizeof(int);
   threadWait = malloc(size);
+  if(!threadWait){return -1;}
   memset(threadWait, 0, size);
 
   pthread_t tid[maxThreads];
@@ -358,17 +359,21 @@ int ems_file(char * dirPath,char * filename, int maxThreads){
     barrierFound = 0;
     for(int i = 0; i < maxThreads; i++){
       Arguments * arguments = malloc(sizeof(struct arguments));
+      if (!arguments) return -1;
       arguments->fdin = fdin;
       arguments->fdout = fdout;
       arguments->id = i;
+      arguments->max_threads = maxThreads;
       if(pthread_create(&tid[i], 0, threadFunc, arguments) != 0){
         fprintf(stderr, "Error creating thread\n");
+        return -1;
       }
     }
     for(int i = 0; i < maxThreads; i++){
       int *result = NULL;
       if(pthread_join(tid[i], (void **)&result)){
         fprintf(stderr, "Error joining thread\n");
+        return -1;
       }
       if(keepReading != 0)
         keepReading = *result;
@@ -388,11 +393,13 @@ void * threadFunc(void* arguments){
   int fdIn = parsedArguments->fdin;
   int fdOut = parsedArguments->fdout;
   int threadID = parsedArguments->id;
+  int max_Threads = parsedArguments->max_threads;
   free(parsedArguments);
   int * res = malloc(sizeof(int));
+  if (!res) return NULL;
 
   while(1){
-    *res = switchCase(fdIn, fdOut, threadID);
+    *res = switchCase(fdIn, fdOut, threadID,max_Threads);
     if(*res == 0 || *res == 1)
       break;
   }
@@ -400,22 +407,22 @@ void * threadFunc(void* arguments){
   pthread_exit(res);
 }
 
-int switchCase(int fdIn, int fdOut, int threadID){
+int switchCase(int fdIn, int fdOut, int threadID,int max_Threads){
   unsigned int event_id, delay, thread_id;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
-  pthread_rwlock_wrlock(&waitCommandLock);
+  if(pthread_rwlock_wrlock(&waitCommandLock)!=0){return -1;}
   if(threadWait[threadID]!=0){
     ems_wait(threadWait[threadID]);
     threadWait[threadID]=0;
   }
-  pthread_rwlock_unlock(&waitCommandLock);
+  if(pthread_rwlock_unlock(&waitCommandLock)!=0){return -1;}
 
-  pthread_mutex_lock(&parseMutex);
+  if(pthread_mutex_lock(&parseMutex)!=0){return -1;}
 
   if(barrierFound){
-    pthread_mutex_unlock(&parseMutex);
+    if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
     return 1;
   }
 
@@ -426,7 +433,7 @@ int switchCase(int fdIn, int fdOut, int threadID){
         return -1;
       }
 
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
 
       if (ems_create(event_id, num_rows, num_columns)) {
         fprintf(stderr, "Failed to create event\n");
@@ -442,7 +449,7 @@ int switchCase(int fdIn, int fdOut, int threadID){
         return -1;
       }
 
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
 
       if (ems_reserve(event_id, num_coords, xs, ys)) {
         fprintf(stderr, "Failed to reserve seats\n");
@@ -455,7 +462,7 @@ int switchCase(int fdIn, int fdOut, int threadID){
         fprintf(stderr, "Invalid command. See HELP for usage\n");
         return -1;
       }
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
 
       if (ems_show(event_id, fdOut)) {
         fprintf(stderr, "Failed to show event\n");
@@ -464,7 +471,7 @@ int switchCase(int fdIn, int fdOut, int threadID){
       break;
 
     case CMD_LIST_EVENTS:
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
 
       if (ems_list_events(fdOut)) {
         fprintf(stderr, "Failed to list events\n");
@@ -478,17 +485,17 @@ int switchCase(int fdIn, int fdOut, int threadID){
         return -1;
       }
 
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
 
       if (delay > 0) {
         printf("Waiting...\n");
         
         if(thread_id==0)
           ems_wait(delay);
-        else{
-          pthread_rwlock_wrlock(&waitCommandLock);
+        else if (thread_id>0 && thread_id<(unsigned int) max_Threads){
+          if(pthread_rwlock_wrlock(&waitCommandLock)!=0){return -1;}
           threadWait[--thread_id] = delay;
-          pthread_rwlock_unlock(&waitCommandLock);
+          if(pthread_rwlock_unlock(&waitCommandLock)!=0){return -1;}
         }
       }
       break;
@@ -498,7 +505,7 @@ int switchCase(int fdIn, int fdOut, int threadID){
       break;
 
     case CMD_HELP:
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
       printf(
           "Available commands:\n"
           "  CREATE <event_id> <num_rows> <num_columns>\n"
@@ -513,14 +520,14 @@ int switchCase(int fdIn, int fdOut, int threadID){
 
     case CMD_BARRIER:
       barrierFound = 1;
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
       return 1;
     case CMD_EMPTY:
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
       break;
 
     case EOC:
-      pthread_mutex_unlock(&parseMutex);
+      if(pthread_mutex_unlock(&parseMutex)!=0){return -1;}
       return 0;
   }
 

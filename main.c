@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
     if (process_counter >= maxProcesses){
       // Wait for any process to end
       int state;
-      wait(&state);
+      if(wait(&state)==-1){return -1;}
       printf("Process ended with state: %d\n", state);
       process_counter--;
     }
@@ -102,7 +102,7 @@ int main(int argc, char *argv[]) {
 
   while (process_counter > 0){
     int state;
-    wait(&state);
+    if(wait(&state)==-1){return -1;}
     printf("Process ended with state: %d\n", state);
     process_counter--;
   }

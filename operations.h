@@ -5,7 +5,7 @@
 #include <pthread.h>
 
 typedef struct arguments{
-    int fdin, fdout, id;
+    int fdin, fdout, id,max_threads;
 } Arguments;
 
 /// Writes to file.
@@ -62,7 +62,7 @@ int ems_file(char * dirpath,char *filename, int maxThreads);
 /// @param fdout file descriptor of the file to write to
 /// @param threadID id of the current thread
 /// @return 0 if EOF, 1 if Barrier found and 2 if another command was found
-int switchCase(int fdIn, int fdOut, int threadID);
+int switchCase(int fdIn, int fdOut, int threadID,int max_Threads);
 
 /// Main function of a thread
 /// @param arguments arguments of each thread.
