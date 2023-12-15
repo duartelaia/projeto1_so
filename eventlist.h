@@ -3,18 +3,16 @@
 
 #include <stddef.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 typedef struct data {
   unsigned int value;
-  pthread_mutex_t mutex;
+  pthread_rwlock_t seatLock;
 } Data;
 
 struct Event {
   unsigned int id;            /// Event id
-  unsigned int reservations;  /// Number of reservations for the event.
-
-  pthread_rwlock_t eventLockShow;    /// Lock the event for reading or writing - Conflict between reserve and show
-  pthread_rwlock_t eventLockReserve; /// Lock the event for reading or writing - Conflict between reserve and reserve
+  _Atomic unsigned int reservations;  /// Number of reservations for the event.
 
   size_t cols;  /// Number of columns.
   size_t rows;  /// Number of rows.

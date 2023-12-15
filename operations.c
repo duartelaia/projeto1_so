@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "eventlist.h"
 #include "constants.h"
@@ -135,9 +136,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   event->id = event_id;
   event->rows = num_rows;
   event->cols = num_cols;
-  event->reservations = 0;
-  pthread_rwlock_init(&event->eventLockShow, NULL);
-  pthread_rwlock_init(&event->eventLockReserve, NULL);
+  atomic_store(&event->reservations, 0);
   event->data = malloc(num_rows * num_cols * sizeof(struct data));
 
   if (event->data == NULL) {
@@ -148,7 +147,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
 
   for (size_t i = 0; i < num_rows * num_cols; i++) {
     event->data[i].value = 0;
-    pthread_mutex_init(&event->data[i].mutex, NULL);
+    pthread_rwlock_init(&event->data[i].seatLock, NULL);
   }
 
   pthread_rwlock_wrlock(&createEventLock);
@@ -179,12 +178,10 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     fprintf(stderr, "Event not found\n");
     return 1;
   }
-  
-  pthread_rwlock_wrlock(&event->eventLockReserve);
-  unsigned int reservation_id = ++event->reservations;
-  pthread_rwlock_unlock(&event->eventLockReserve);
-  
-  pthread_rwlock_rdlock(&event->eventLockShow);
+
+  unsigned int lastReservation = atomic_load(&event->reservations);
+  unsigned int reservation_id = ++lastReservation;
+  atomic_store(&event->reservations, reservation_id);
 
   sortReserves(xs, ys, num_seats);
   sortReserves(ys, xs, num_seats);
@@ -199,37 +196,34 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
       break;
     }
 
-    pthread_mutex_lock(&event->data[row*col].mutex);
+    size_t seatIndex = seat_index(event, row, col);
+    pthread_rwlock_wrlock(&event->data[seatIndex].seatLock);
     
-    if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
+    if (*get_seat_with_delay(event, seatIndex) != 0) {
       fprintf(stderr, "Seat already reserved\n");
-      pthread_mutex_unlock(&event->data[row*col].mutex);
+      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
       break;
     }
 
-    *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
-
-    pthread_mutex_unlock(&event->data[row*col].mutex);
+    *get_seat_with_delay(event, seatIndex) = reservation_id;
   }
   
   // If the reservation was not successful, free the seats that were reserved.
   if (i < num_seats) {
-    pthread_rwlock_wrlock(&event->eventLockReserve);
-    event->reservations--;
-    pthread_rwlock_unlock(&event->eventLockReserve);
-
+    atomic_store(&event->reservations, --reservation_id);
     for (size_t j = 0; j < i; j++) {
-      pthread_mutex_lock(&event->data[xs[j]*ys[j]].mutex);
-      *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
-      pthread_mutex_unlock(&event->data[xs[j]*ys[j]].mutex);
+      size_t seatIndex = seat_index(event, xs[j], ys[j]);
+      *get_seat_with_delay(event, seatIndex) = 0;
+      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
     }
-
-    pthread_rwlock_unlock(&event->eventLockShow);
     return 1;
+  }else{
+    for (size_t j = 0; j < i; j++) {
+      size_t seatIndex = seat_index(event, xs[j], ys[j]);
+      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+    }
+    return 0;
   }
-
-  pthread_rwlock_unlock(&event->eventLockShow);
-  return 0;
 }
 
 int ems_show(unsigned int event_id, int fd) {
@@ -248,7 +242,6 @@ int ems_show(unsigned int event_id, int fd) {
     fprintf(stderr, "Event not found\n");
     return 1;
   }
-  pthread_rwlock_wrlock(&event->eventLockShow);
 
   char buffer[10000];
   char smallBuffer[10];
@@ -256,7 +249,11 @@ int ems_show(unsigned int event_id, int fd) {
 
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
-      unsigned int* seat = get_seat_with_delay(event, seat_index(event, i, j));
+
+      size_t seatIndex = seat_index(event, i, j);
+      pthread_rwlock_rdlock(&event->data[seatIndex].seatLock);
+
+      unsigned int* seat = get_seat_with_delay(event, seatIndex);
 
       snprintf(smallBuffer, sizeof(smallBuffer), "%u", *seat);
       strcat(buffer, smallBuffer);
@@ -269,8 +266,15 @@ int ems_show(unsigned int event_id, int fd) {
     strcat(buffer, "\n");
   }
 
+
+  for (size_t i = 1; i <= event->rows; i++) {
+    for (size_t j = 1; j <= event->cols; j++) {
+      size_t seatIndex = seat_index(event, i, j);
+      pthread_rwlock_unlock(&event->data[seatIndex].seatLock);
+    }
+  }
+
   writeToFile(fd,buffer);
-  pthread_rwlock_unlock(&event->eventLockShow);
 
   return 0;
 }
@@ -296,12 +300,10 @@ int ems_list_events(int fd) {
   char smallBuffer[10];
 
   while (current != NULL) {
-    pthread_rwlock_wrlock(&current->event->eventLockShow);
     strcat(buffer,"Event: ");
     snprintf(smallBuffer, sizeof(smallBuffer), "%u", (current->event)->id);
     strcat(buffer, smallBuffer);
     strcat(buffer, "\n");
-    pthread_rwlock_unlock(&current->event->eventLockShow);
     current = current->next;
   }
 
